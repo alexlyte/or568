@@ -10,13 +10,15 @@ import botocore
 #client = boto3.client('s3') #low-level functional API
 #all_objects =  client.list_objects(Bucket = 'kaggle-tsa')
 #print(all_objects)
-KEY = "sample/00360f79fd6e02781457eda48f85da90.aps"
-
+#KEY = "sample/00360f79fd6e02781457eda48f85da90.aps"
+KEY = "tsa_datasets/stage1/aps/00360f79fd6e02781457eda48f85da90.aps"
 
 s3 = boto3.resource('s3') #high-level object-oriented API
 
 try:
-    my_bucket = s3.Bucket('kaggle-tsa').download_file(KEY,'./00360f79fd6e02781457eda48f85da90.aps') #subsitute this for your s3 bucket name. 
+    my_bucket = s3.Bucket('kaggle-tsa').download_file(KEY,'./00360f79fd6e02781457eda48f85da90.aps') 
+    print(my_bucket)
+    #subsitute this for your s3 bucket name. 
 except botocore.exceptions.ClientError as e:
     print(e)
 

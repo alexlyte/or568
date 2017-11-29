@@ -8,7 +8,7 @@ import cv2
 import pandas as pd
 import seaborn as sns
 import scipy.stats as stats
-
+import boto3
 # constants
 COLORMAP = 'pink'
 APS_FILE_NAME = 'tsa_datasets/stage1/aps/00360f79fd6e02781457eda48f85da90.aps'
@@ -17,15 +17,15 @@ THREAT_LABELS = 'tsa_datasets/stage1/stage1_labels.csv'
 
 # import boto3
 
-# client = boto3.client('s3') #low-level functional API
-# all_objects =  client.list_objects(Bucket = 'kaggle-tsa')
-# print(all_objects)
+#client = boto3.client('s3') #low-level functional API
+#all_objects =  client.list_objects(Bucket = 'kaggle-tsa')
+#print(all_objects)
 
 
-# show the threat zones
-body_zones_img = plt.imread(BODY_ZONES)
-fig, ax = plt.subplots(figsize=(15,15))
-ax.imshow(body_zones_img)
+##show the threat zones
+#body_zones_img = plt.imread(BODY_ZONES)
+#fig, ax = plt.subplots(figsize=(15,15))
+#ax.imshow(body_zones_img)
 
 
 
@@ -394,10 +394,107 @@ def read_header(infile):
   
 #unit test ----------------------------------
 header = read_header(APS_FILE_NAME)
-
+#print(header)
 #for data_item in sorted(header):
 #    print ('{} -> {}'.format(data_item, header[data_item]))
 
+
+
+#----------------------------------------------------------------------------------
+# read_data(infile):  reads and rescales any of the four image types
+#
+# infile:             an .aps, .aps3d, .a3d, or ahi file
+#
+# returns:            the stack of images
+#
+# note:               word_type == 7 is an np.float32, word_type == 4 is np.uint16      
+#----------------------------------------------------------------------------------
+
+def read_data(infile):
+    
+    # read in header and get dimensions
+    h = read_header(infile)
+    nx = int(h['num_x_pts'])
+    ny = int(h['num_y_pts'])
+    nt = int(h['num_t_pts'])
+    
+    extension = os.path.splitext(infile)[1]
+    
+    with open(infile, 'rb') as fid:
+          
+        # skip the header
+        fid.seek(512) 
+
+        # handle .aps and .a3aps files
+        if extension == '.aps' or extension == '.a3daps':
+        
+            if(h['word_type']==7):
+                data = np.fromfile(fid, dtype = np.float32, count = nx * ny * nt)
+
+            elif(h['word_type']==4): 
+                data = np.fromfile(fid, dtype = np.uint16, count = nx * ny * nt)
+
+            # scale and reshape the data
+            data = data * h['data_scale_factor'] 
+            data = data.reshape(nx, ny, nt, order='F').copy()
+
+        # handle .a3d files
+        elif extension == '.a3d':
+              
+            if(h['word_type']==7):
+                data = np.fromfile(fid, dtype = np.float32, count = nx * ny * nt)
+                
+            elif(h['word_type']==4):
+                data = np.fromfile(fid, dtype = np.uint16, count = nx * ny * nt)
+
+            # scale and reshape the data
+            data = data * h['data_scale_factor']
+            data = data.reshape(nx, nt, ny, order='F').copy() 
+            
+        # handle .ahi files
+        elif extension == '.ahi':
+            data = np.fromfile(fid, dtype = np.float32, count = 2* nx * ny * nt)
+            data = data.reshape(2, ny, nx, nt, order='F').copy()
+            real = data[0,:,:,:].copy()
+            imag = data[1,:,:,:].copy()
+
+        if extension != '.ahi':
+            return data
+        else:
+            return real, imag
+
+#unit test ----------------------------------
+d = read_data(APS_FILE_NAME)
+
+#----------------------------------------------------------------------------------------
+# get_hit_rate_stats(infile):  gets the threat probabilities in a useful form
+#
+# infile:                      labels csv file
+#
+# returns:                     a dataframe of the summary hit probabilities
+#
+#----------------------------------------------------------------------------------------
+
+def get_hit_rate_stats(infile):
+    # pull the labels for a given patient
+    df = pd.read_csv(infile)
+
+    # Separate the zone and patient id into a df
+    df['Subject'], df['Zone'] = df['Id'].str.split('_',1).str
+    df = df[['Subject', 'Zone', 'Probability']]
+
+    # make a df of the sums and counts by zone and calculate hit rate per zone, then sort high to low
+    df_summary = df.groupby('Zone')['Probability'].agg(['sum','count'])
+    df_summary['Zone'] = df_summary.index
+    df_summary['pct'] = df_summary['sum'] / df_summary['count']
+    df_summary.sort_values('pct', axis=0, ascending= False, inplace=True)
+    
+    return df_summary
+
+# unit test -----------------------
+df = get_hit_rate_stats(THREAT_LABELS)
+df.head()
+print(df)
 
 #------------------------------------------------------------------------------------------
 # print_hit_rate_stats(df_summary): lists threat probabilities by zone
@@ -417,7 +514,8 @@ def print_hit_rate_stats(df_summary):
                                              ( df_summary['sum'].sum(axis=0) / df_summary['count'].sum(axis=0))*100))
 
 # unit test -----------------------
-#print_hit_rate_stats(df)
+
+print_hit_rate_stats(df)
 
 
 
@@ -449,7 +547,7 @@ def get_subject_labels(infile, subject_id):
 
     
 # unit test ----------------------------------------------------------------------
-#print(get_subject_labels(THREAT_LABELS, '00360f79fd6e02781457eda48f85da90'))
+print(get_subject_labels(THREAT_LABELS, '00360f79fd6e02781457eda48f85da90'))
 
 
 
@@ -487,8 +585,8 @@ def get_subject_zone_label(zone_num, df):
 
     
 # unit test --------------------------------
-#label = get_subject_zone_label(13, get_subject_labels(THREAT_LABELS, '00360f79fd6e02781457eda48f85da90'))
-#print (np.array(label))
+label = get_subject_zone_label(13, get_subject_labels(THREAT_LABELS, '00360f79fd6e02781457eda48f85da90'))
+print (np.array(label))
 
 
 
@@ -520,7 +618,7 @@ def plot_image_set(infile):
     print('Done!')
 
 # unit test ----------------------------------
-#plot_image_set(APS_FILE_NAME)
+plot_image_set(APS_FILE_NAME)
 
 
 #----------------------------------------------------------------------------------
@@ -544,16 +642,16 @@ def get_single_image(infile, nth_image):
   
 
 # unit test ---------------------------------------------------------------
-#an_img = get_single_image(APS_FILE_NAME, 0)
+an_img = get_single_image(APS_FILE_NAME, 0)
 
-#fig, axarr = plt.subplots(nrows=1, ncols=2, figsize=(20, 5))
+fig, axarr = plt.subplots(nrows=1, ncols=2, figsize=(20, 5))
 
-#axarr[0].imshow(an_img, cmap=COLORMAP)
-#plt.subplot(122)
-#plt.hist(an_img.flatten(), bins=256, color='c')
-#plt.xlabel("Raw Scan Pixel Value")
-#plt.ylabel("Frequency")
-#plt.show()
+axarr[0].imshow(an_img, cmap=COLORMAP)
+plt.subplot(122)
+plt.hist(an_img.flatten(), bins=256, color='c')
+plt.xlabel("Raw Scan Pixel Value")
+plt.ylabel("Frequency")
+plt.show()
 
 
 
@@ -574,16 +672,16 @@ def convert_to_grayscale(img):
     return np.uint8(img_rescaled)
 
 # unit test ------------------------------------------
-#img_rescaled = convert_to_grayscale(an_img)
+img_rescaled = convert_to_grayscale(an_img)
 
-#fig, axarr = plt.subplots(nrows=1, ncols=2, figsize=(20, 5))
+fig, axarr = plt.subplots(nrows=1, ncols=2, figsize=(20, 5))
 
-#axarr[0].imshow(img_rescaled, cmap=COLORMAP)
-#plt.subplot(122)
-#plt.hist(img_rescaled.flatten(), bins=256, color='c')
-#plt.xlabel("Grayscale Pixel Value")
-#plt.ylabel("Frequency")
-#plt.show()
+axarr[0].imshow(img_rescaled, cmap=COLORMAP)
+plt.subplot(122)
+plt.hist(img_rescaled.flatten(), bins=256, color='c')
+plt.xlabel("Grayscale Pixel Value")
+plt.ylabel("Frequency")
+plt.show()
 
 
 
@@ -606,16 +704,16 @@ def spread_spectrum(img):
     return img
   
 # unit test ------------------------------------------
-#img_high_contrast = spread_spectrum(img_rescaled)
+img_high_contrast = spread_spectrum(img_rescaled)
 
-#fig, axarr = plt.subplots(nrows=1, ncols=2, figsize=(20, 5))
+fig, axarr = plt.subplots(nrows=1, ncols=2, figsize=(20, 5))
 
-#axarr[0].imshow(img_high_contrast, cmap=COLORMAP)
-#plt.subplot(122)
-#plt.hist(img_high_contrast.flatten(), bins=256, color='c')
-#plt.xlabel("Grayscale Pixel Value")
-#plt.ylabel("Frequency")
-#plt.show()
+axarr[0].imshow(img_high_contrast, cmap=COLORMAP)
+plt.subplot(122)
+plt.hist(img_high_contrast.flatten(), bins=256, color='c')
+plt.xlabel("Grayscale Pixel Value")
+plt.ylabel("Frequency")
+plt.show()
 
 
 
@@ -646,17 +744,17 @@ def roi(img, vertices):
 # unit test -----------------------------------------------------------------
 #fig, axarr = plt.subplots(nrows=4, ncols=4, figsize=(10,10))
 #    
-#i = 0
-#for row in range(4):
-#    for col in range(4):
-#        an_img = get_single_image(APS_FILE_NAME, i)
-#        img_rescaled = convert_to_grayscale(an_img)
-#        img_high_contrast = spread_spectrum(img_rescaled)
-#        if zone_slice_list[0][i] is not None:
-#            masked_img = roi(img_high_contrast, zone_slice_list[0][i])
-#            resized_img = cv2.resize(masked_img, (0,0), fx=0.1, fy=0.1)
-#            axarr[row, col].imshow(resized_img, cmap=COLORMAP)
-#        i += 1
+i = 0
+for row in range(4):
+    for col in range(4):
+        an_img = get_single_image(APS_FILE_NAME, i)
+        img_rescaled = convert_to_grayscale(an_img)
+        img_high_contrast = spread_spectrum(img_rescaled)
+        if zone_slice_list[0][i] is not None:
+            masked_img = roi(img_high_contrast, zone_slice_list[0][i])
+            resized_img = cv2.resize(masked_img, (0,0), fx=0.1, fy=0.1)
+            axarr[row, col].imshow(resized_img, cmap=COLORMAP)
+        i += 1
 
 
 
