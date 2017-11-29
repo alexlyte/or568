@@ -287,3 +287,5 @@ zone_crop_list =  [ [ # threat zone 1
                       sector_crop_list[4], sector_crop_list[4] ] ]
 
 # MORE TO COME, WORKING ON UNDERSTANDING DATA 
+
+
